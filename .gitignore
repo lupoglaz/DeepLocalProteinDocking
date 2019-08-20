@@ -1,3 +1,18 @@
+#tmp files
+*.hex
+*.xplor
+*.pdb
+*.mac
+*.dat
+*.txt
+*.out
+*.code-workspace
+*.pkl
+*.th
+*.png 
+*.svg 
+*.lprof
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
