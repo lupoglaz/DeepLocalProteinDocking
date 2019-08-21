@@ -75,4 +75,4 @@ An example of the testing parameters can be found in *server_test_local.sh*.
 
 
 # Plotting the results
-The instruction on how to plot the results are [here](./scripts/Dataset/README.md)
+The instruction on how to plot the results are [here](./scripts/Results/README.md)
