@@ -414,7 +414,7 @@ if __name__=='__main__':
 	stream_test = get_benchmark_stream(DATASET_DIR, struct_folder='Matched', subset=args.table)
 
 	if not os.path.exists(results_file):
-		# cluster_complexes(stream_test, COMPLEXES_DIR, TEST_DIR)
+		cluster_complexes(stream_test, COMPLEXES_DIR, TEST_DIR)
 		results = measure_quality(stream_test, COMPLEXES_DIR, num_conf=10)
 		hits = get_hits(stream_test, COMPLEXES_DIR, TEST_DIR)
 
