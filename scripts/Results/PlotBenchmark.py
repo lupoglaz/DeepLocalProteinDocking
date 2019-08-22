@@ -405,8 +405,8 @@ def analyze_PEPSI(targets, results, hits):
 
 if __name__=='__main__':
 	parser = argparse.ArgumentParser(description='Train deep protein docking')
-	#parser.add_argument('-experiment', default='LocalE3MultiResRepr4x4', help='Experiment name')
-	parser.add_argument('-experiment', default='LocalSE3MultiResReprScalar', help='Experiment name')
+	parser.add_argument('-experiment', default='LocalE3MultiResRepr4x4', help='Experiment name')
+	# parser.add_argument('-experiment', default='LocalSE3MultiResReprScalar', help='Experiment name')
 	
 	parser.add_argument('-dataset', default='DockingBenchmarkV4', help='Dataset name')
 	parser.add_argument('-table', default='TableS2.csv', help='Targets table')
