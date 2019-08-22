@@ -339,26 +339,43 @@ def analyze_ClusPro(targets, results, hits):
 		if not difficulty in results[category].keys():
 			results[category][difficulty] = []
 		results[category][difficulty].append(res[target])
-
+	
+	cat_results = {}
 	for category in results.keys():
-		for difficulty in results[category].keys():
+		cat_results[category] = {}
+		if category!='AB': # classified into difficulties
+			for difficulty in results[category].keys():
+				av_irmsd = 0.0
+				av_num_hits = 0.0
+				n_targets = len(results[category][difficulty])
+				for res in results[category][difficulty]:
+					av_irmsd += res[0]
+					av_num_hits += res[1]
+				av_irmsd /= float(n_targets)
+				av_num_hits /= float(n_targets)
+				cat_results[category][difficulty] = (av_irmsd, av_num_hits)
+		else: # no difficulties, all together
 			av_irmsd = 0.0
 			av_num_hits = 0.0
-			n_targets = len(results[category][difficulty])
-			for res in results[category][difficulty]:
-				av_irmsd += res[0]
-				av_num_hits += res[1]
+			n_targets = 0
+			for difficulty in results[category].keys():
+				n_targets += len(results[category][difficulty])
+				for res in results[category][difficulty]:
+					av_irmsd += res[0]
+					av_num_hits += res[1]
+				
 			av_irmsd /= float(n_targets)
 			av_num_hits /= float(n_targets)
-			results[category][difficulty] = (av_irmsd, av_num_hits)
+			cat_results[category][difficulty] = (av_irmsd, av_num_hits)
+
 	str = ''
-	for difficulty in results['O'].keys():
+	for difficulty in cat_results['O'].keys():
 		str += '%s           \t'%difficulty
 	print(str)
-	for category in results.keys():
+	for category in cat_results.keys():
 		str = ''
-		for difficulty in results[category].keys():
-			str += '%f, %f\t'%results[category][difficulty]
+		for difficulty in cat_results[category].keys():
+			str += '%f, %f\t'%cat_results[category][difficulty]
 		print(category)
 		print(str)
 
