@@ -8,7 +8,7 @@
 
 # Step by step instructions
 
-[Training dataset (23Gb)](http://proteinfoldingproject.com/static/datasets/LocalDockingDataset.tar.xz)
+[Training dataset (13Gb)](http://proteinfoldingproject.com/static/datasets/LocalDockingDataset.tar.gz)
 
 [Training logs (39Mb)](http://proteinfoldingproject.com/static/datasets/DeepLocalDockingLog.tar.xz)
 
