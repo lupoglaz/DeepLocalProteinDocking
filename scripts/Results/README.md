@@ -16,7 +16,8 @@ It does few things:
 2. Measures lrmsd of the top 2000 decoys
 3. Measures the quality of clusters
 
-In the paper we do not use clustering and instead only second step is useful.
+In the paper we do not use clustering and instead only second step is useful. Take into account, that DockerParser returns lrmsd for all 2000 generated conformations, but
+in the table we take the minimum of the first 1000 only (line 326 *PlotBenchmark.py*).
 
 This scripts outputs many things, but the paper shows the comparison with ClusPro only. The table in the end should look like this:
 
@@ -29,4 +30,4 @@ This scripts outputs many things, but the paper shows the comparison with ClusPr
 ||__O__||
 |7.098093, 192.510204|	5.932915, 231.529412|	9.614210, 94.800000	|
 
-First number is average minimum I-RMSD among top 2000 results, second is average number of hits among to 2000 results.
+First number is average minimum I-RMSD among top 1000 results, second is average number of hits among to 1000 results.
