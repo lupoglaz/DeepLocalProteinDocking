@@ -76,3 +76,18 @@ An example of the testing parameters can be found in *server_test_local.sh*.
 
 # Plotting the results
 The instruction on how to plot the results are [here](./scripts/Results/README.md)
+
+# Citing this work
+```bibtex
+@article {Derevyanko738690,
+	author = {Derevyanko, Georgy and Lamoureux, Guillaume},
+	title = {Protein-protein docking using learned three-dimensional representations},
+	elocation-id = {738690},
+	year = {2019},
+	doi = {10.1101/738690},
+	publisher = {Cold Spring Harbor Laboratory},
+	URL = {https://www.biorxiv.org/content/early/2019/08/19/738690},
+	eprint = {https://www.biorxiv.org/content/early/2019/08/19/738690.full.pdf},
+	journal = {bioRxiv}
+}
+```
