@@ -50,13 +50,17 @@ elif os.path.exists("/data/lisa/data/Proteins"):
 else:
 	logging.info("Server detected")
 	storage_dir = "/media/lupoglaz"
-	DATA_DIR = os.path.join(storage_dir, "ProteinsDataset")
+	DATA_DIR = os.path.join(storage_dir, "ProteinsDataset/Docking")
 	
-	MODELS_DIR = os.path.join(storage_dir, "DPD_models")
+	log_storage_dir = os.path.join(storage_dir, "DeepProteinDocking")
+	if not os.path.exists(log_storage_dir):
+		os.mkdir(log_storage_dir)
+	
+	MODELS_DIR = os.path.join(log_storage_dir, "Models")
 	if not os.path.exists(MODELS_DIR):
 		os.mkdir(MODELS_DIR)
 
-	LOG_DIR = os.path.join(storage_dir, "DPD_experiments")
+	LOG_DIR = os.path.join(log_storage_dir, "Experiments")
 	if not os.path.exists(LOG_DIR):
 		os.mkdir(LOG_DIR)
 

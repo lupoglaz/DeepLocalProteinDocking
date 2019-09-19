@@ -6,11 +6,11 @@ from DockerParser import DockerParser
 from SE3DockerParser import SE3DockerParser
 import multiprocessing
 
-sys.path.append(os.path.join(os.path.dirname(__file__), "../.."))
+sys.path.append(os.path.join(os.path.dirname(__file__), "../../.."))
 from src import LOG_DIR, MODELS_DIR, DATA_DIR
 from src.Dataset import get_benchmark_stream
 
-sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
+sys.path.append(os.path.join(os.path.dirname(__file__), "../.."))
 from Dataset.processing_utils import _get_chains, _get_chain, _separate_chain, _run_nolb, _run_hex, run_TMScore, _get_contacts, _get_fnat, _get_capri_quality
 from Dataset.profit import ligand_rmsd, get_irmsd
 
