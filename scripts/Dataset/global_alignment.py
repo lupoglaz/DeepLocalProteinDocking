@@ -38,9 +38,10 @@ def get_alignment( params ):
 	seq1, seq2 = params
 	matrix = matlist.blosum62
 	result = pairwise2.align.globaldx(seq1, seq2, matrix)
-		
+	
 	if len(result)==0:
 		return None, 0.0
+
 	seq1_aligned = result[0][0]
 	seq2_aligned = result[0][1]
 	identical = 0
@@ -61,10 +62,11 @@ def get_alignment( params ):
 		if c_seq1 == c_seq2:
 			identical += 1
 			mapping.append((idx_seq1, idx_seq2))
+		
 		idx_seq1 += 1
 		idx_seq2 += 1
 	
-	identity_percentage = identical/max(len(seq1),len(seq2))
+	identity_percentage = float(identical)/float(len(seq1_aligned))
 
 	return mapping, identity_percentage
 

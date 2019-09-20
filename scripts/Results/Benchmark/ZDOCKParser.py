@@ -8,6 +8,10 @@ from src import LOG_DIR, DATA_DIR
 
 from TorchProteinLibrary.FullAtomModel import PDB2CoordsUnordered, CoordsTranslate, CoordsRotate, writePDB
 
+sys.path.append(os.path.join(os.path.dirname(__file__), "../.."))
+from Dataset.processing_utils import _get_contacts, _get_fnat, _get_capri_quality
+
+from DockingBenchmark import DockingBenchmark
 
 class ZDOCKParser:
 	def __init__(self):
@@ -109,6 +113,56 @@ class ZDOCKParser:
 		self.ligand = p2c([os.path.join(pdb_dir, self.target_dict["lig"])])
 		self.receptor = p2c([os.path.join(pdb_dir, self.target_dict["rec"])])
 
+	def select_atoms(self, protein, atomic_mask):
+		coords, chains, res_names, res_nums, atom_names, num_atoms = protein
+		N = num_atoms[0].item()
+		
+		isSel = atomic_mask
+		isSel_coords = torch.stack([atomic_mask for i in range(3)], dim=1).unsqueeze(dim=0)
+		isSel_names = torch.stack([atomic_mask for i in range(4)], dim=1).unsqueeze(dim=0)	
+		num_sel_atoms =  atomic_mask.sum().item()
+		sel_num_atoms = torch.tensor([num_sel_atoms], dtype=torch.int, device='cpu')	
+		
+		coords = coords.view(1, N, 3)
+		sel_coords = torch.masked_select(coords, isSel_coords).view(1, num_sel_atoms*3).contiguous()
+		sel_chains = torch.masked_select(chains, isSel_names).view(1, num_sel_atoms, 4).contiguous()
+		sel_resnames = torch.masked_select(res_names, isSel_names).view(1, num_sel_atoms, 4).contiguous()
+		sel_resnums = torch.masked_select(res_nums, isSel).view(1, num_sel_atoms).contiguous()
+		sel_atom_names = torch.masked_select(atom_names, isSel_names).view(1, num_sel_atoms, 4).contiguous()
+				
+		return sel_coords, sel_chains, sel_resnames, sel_resnums, sel_atom_names, sel_num_atoms
+	
+	def make_CA_mask(self, protein):
+		atom_names = protein[4]
+		is0C = torch.eq(atom_names[:,:,0], 67).squeeze()
+		is1A = torch.eq(atom_names[:,:,1], 65).squeeze()
+		is20 = torch.eq(atom_names[:,:,2], 0).squeeze()
+		isCA = is0C*is1A*is20
+		
+		return isCA
+
+	def make_res_mask(self, protein, residues):
+		chains = protein[1]
+		resnums = protein[3]
+		num_atoms = protein[-1].item()
+		isSelectedResnums = torch.zeros(num_atoms, dtype=torch.uint8, device='cpu')
+		for i in range(num_atoms):
+			resnum = resnums[0, i].item()
+			chain = str(chr(chains[0, i, 0].item()))
+			if (chain, resnum) in residues:
+				isSelectedResnums[i] = 1
+		
+		return isSelectedResnums
+
+
+	def select_target_CA(self):
+		self.receptor = self.select_atoms(self.receptor, self.make_CA_mask(self.receptor))
+		self.ligand = self.select_atoms(self.ligand, self.make_CA_mask(self.ligand))
+
+	def select_target_residues(self, rec_residues, lig_residues):
+		self.receptor = self.select_atoms(self.receptor, self.make_res_mask(self.receptor, rec_residues))
+		self.ligand = self.select_atoms(self.ligand, self.make_res_mask(self.ligand, lig_residues))
+		
 	def getRotationMatrix(self, psi, theta, phi, rev=0):
 		if rev == 0:
 			r11 = cos(psi)*cos(phi)  -  sin(psi)*cos(theta)*sin(phi)
@@ -205,40 +259,34 @@ class ZDOCKParser:
 		writePDB(output_filename, *(self.complex))
 
 
-def read_pdb_list(pdb_list_file, benchmark_dir):
-	targets = []
-	cplx_type = 0
-	with open(pdb_list_file) as fin:
-		for line in fin:
-			if line.find("Rigid-body")!=-1:
-				cplx_type = 1
-				continue
-			elif line.find("Medium Difficulty")!=-1:
-				cplx_type = 2
-				continue
-			elif line.find("Difficult")!=-1:
-				cplx_type = 3
-				continue
 
-			if cplx_type>0:
-				sline = line.split('\t')
-				bound_complex_name = sline[0]
-				native_name = bound_complex_name.split('_')[0]
-				targets.append((native_name, cplx_type))	
-	
-	return targets
-
+				
 if __name__=='__main__':
 	print(os.listdir(DATA_DIR))
 	print(os.listdir(LOG_DIR))
-
 	benchmark_dir = os.path.join(DATA_DIR, "DockingBenchmarkV4")
-	benchmark_list = os.path.join(benchmark_dir, "TableS2.csv")
-	# print(read_pdb_list(benchmark_list, benchmark_dir))
+	benchmark_list = os.path.join(benchmark_dir, "TableS1.csv")
+	benchmark = DockingBenchmark(benchmark_dir, benchmark_list)
 	
 	parser = ZDOCKParser()
 	parser.parse_ouput(os.path.join(LOG_DIR, "ZDOCK", "DockingBenchmarkV4_15deg", "1A2K.zd3.0.2.cg.fixed.out"), False)
-	print(parser)
+	
+
 	parser.read_targets(os.path.join(LOG_DIR, "ZDOCK", "decoys_bm4_zd3.0.2_15deg_fixed","input_pdbs"))
-	parser.write_conformation("tmp.pdb", 0)
+	parser.select_target_CA()
+	parser.write_conformation("tmp_ca.pdb", 0)
+	
+	target = benchmark.get_target('1A2K')
+	rec, lig = benchmark.get_unbound_contacts(target)
+	
+	urec = list(zip(*rec))
+	rec_res = set(zip(urec[0], urec[1]))
+
+	ulig = list(zip(*lig))
+	lig_res = set(zip(ulig[0], ulig[1]))
+	
+
+	parser.select_target_residues(rec_res, lig_res)
+	parser.write_conformation("tmp_ca_int.pdb", 0)
+
 	
