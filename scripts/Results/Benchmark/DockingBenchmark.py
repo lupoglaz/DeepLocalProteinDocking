@@ -21,43 +21,77 @@ def get_chain_seq(chain):
 	seq = ""
 	resnums = []
 	for residue in chain:
+		if residue.get_id()[2] != ' ':
+			print('Skipping:', residue.get_id())
+			continue
+
 		if residue.get_resname() in standard_aa_names:
 			seq += dindex_to_1[d3_to_index[residue.get_resname()]]
 			resnum = residue.get_id()[1]
 			resnums.append(resnum)
 	return seq, resnums
-	
 
-def match_chains(chains1, chains2):
-	chain_match_bu = {}
-	
-	for bchain in chains1.keys():
-		bseq, bresnum = chains1[bchain]
-		if len(bseq) == 0:
-			raise Exception("Chain is empty", bchain)
-		max_id = 0.0
-		matching_chain_id = None
-		max_alignment = None
-		for uchain in chains2.keys():
-			useq, uresnums = chains2[uchain]
-			if len(useq) == 0:
-				raise Exception("Chain is empty", uchain)
-			
-			alignment, global_id = get_alignment( (bseq, useq) )
-			if global_id > max_id:
-				matching_chain_id = uchain
-				max_id = global_id
-				max_alignment = alignment
 
-		if matching_chain_id is None:
-			raise Exception("Can't align chains", bchain, uchain)
-					
-		chain_match_bu[bchain] = (matching_chain_id, max_id, dict(max_alignment))
+def get_res_dist(struct1, struct2, alignment):
+	struct1_residues = Selection.unfold_entities(struct1, 'R')
+	struct2_residues = Selection.unfold_entities(struct2, 'R')
+	av_dist = 0.0	
+	for res1, res2 in alignment:
+		if ('CA' in struct1_residues[res1]) and ('CA' in struct2_residues[res2]):
+			ca1 = struct1_residues[res1]['CA']
+			ca2 = struct2_residues[res2]['CA']
+			av_dist += ca1-ca2
+		else:
+			continue
+
+	return av_dist/float(len(alignment))
+
+def match_chains(structure1, structure2, align_tol=False, dist_tol=False):
+	chain_match = {}
+	
+	chains1 = structure1["chains"]
+	chains2 = structure2["chains"]
+	
+	best_match = None
+	best_alignment = None
+	for chain1 in chains1.keys():
+		seq1, resnum1 = chains1[chain1]
+		min_dist = float('+Inf')
+		for chain2 in chains2.keys():
+			seq2, resnum2 = chains2[chain2]
 		
-	return chain_match_bu
+			if len(seq1) == 0 or len(seq2) == 0:
+				raise Exception("Chain is empty")
+
+			alignment, global_id, seq_aligned = get_alignment( (seq1, seq2) )
+			av_dist = get_res_dist(structure1["structure"][chain1], structure2["structure"][chain2], alignment)
+			
+			if av_dist < min_dist:
+				min_dist = av_dist
+				best_alignment = seq_aligned
+				best_match = (chain2, global_id, dict(alignment))
+
+		if best_match[1] < 0.9 and (not align_tol):
+			raise(Exception("Alignment is bad", chain1, best_match[0], best_alignment))
+		
+		if min_dist > 5.0 and (not dist_tol):
+			raise(Exception("Best match is bad", chain1, best_match[0], best_alignment, min_dist))
+		
+		chain_match[chain1] = best_match
+				
+	return chain_match
+
 
 class DockingBenchmark:
 	def __init__(self, benchmark_dir, table):
+		#1QFW_HL deleted
+		#2I25_ added 3LZT_A chain
+		#1OYV_B:I deleted
+		#1XD3 added 1UCH_A
+		#1Z5Y added 1L6P_A
+		#2H7V added 1MH1_A
+		#2NZ8 added 1MH1_A
+
 		self.benchmark_dir = benchmark_dir
 		table_path = os.path.join(benchmark_dir, table)
 		self.targets = []
@@ -99,9 +133,9 @@ class DockingBenchmark:
 					sline = line.split('\t')
 					target["difficulty"] = difficulty
 					target["category"] = sline[1]
-					target["complex"] = self.parse_strucutre_name(sline[0])
-					target["receptor"] = self.parse_strucutre_name(sline[2], sline[3])
-					target["ligand"] = self.parse_strucutre_name(sline[4], sline[5])
+					target["complex"] = self.parse_strucutre_name(sline[0].strip())
+					target["receptor"] = self.parse_strucutre_name(sline[2].strip(), sline[3])
+					target["ligand"] = self.parse_strucutre_name(sline[4].strip(), sline[5])
 					self.targets.append(target)
 	
 	def parse_strucutre_name(self, name, description=None):
@@ -110,9 +144,12 @@ class DockingBenchmark:
 		if len(sname) == 2:
 			schains = sname[1].split(':')
 			if len(schains)==1:
+				chain = schains[0].split('(')[0]
+				if len(chain) == 0:
+					chain = " "
 				return {
 					"name":struct_name,
-					"chain": schains[0],
+					"chain": chain,
 					"description": description
 				}
 			else:
@@ -125,7 +162,7 @@ class DockingBenchmark:
 		else:
 			return {
 					"name":struct_name,
-					"chain": "",
+					"chain": " ",
 					"description": description
 				}
 
@@ -145,6 +182,9 @@ class DockingBenchmark:
 				continue
 			lig_resname = dindex_to_1[d3_to_index[ligand_res.get_resname()]]
 			lig_resnum = ligand_res.get_id()[1]
+			if ligand_res.get_id()[2] != ' ':
+				print('Skipping:', ligand_res.get_id())
+				continue
 			lig_chname = ligand_res.get_parent().get_id()
 			res_contacts = []
 			
@@ -157,6 +197,9 @@ class DockingBenchmark:
 					continue
 				rec_resname = dindex_to_1[d3_to_index[receptor_res.get_resname()]]
 				rec_resnum = receptor_res.get_id()[1]
+				if receptor_res.get_id()[2] != ' ':
+					print('Skipping:', receptor_res.get_id())
+					continue
 				rec_chname = receptor_res.get_parent().get_id()
 				
 				contacts_lig.add( (lig_chname, lig_resnum, lig_resname))
@@ -180,9 +223,9 @@ class DockingBenchmark:
 		})
 		
 		struct1 = pdb_parser.get_structure('X', bound_complex["receptor"]["path"])[0]
-		struct1_chains = set([chain.get_id() for chain in struct1.get_chains()])
+		struct1_chains = set([chain.get_id() for chain in struct1.get_chains() if len(get_chain_seq(chain)[0])>0 ])
 		struct2 = pdb_parser.get_structure('X', bound_complex["ligand"]["path"])[0]
-		struct2_chains = set([chain.get_id() for chain in struct2.get_chains()])
+		struct2_chains = set([chain.get_id() for chain in struct2.get_chains() if len(get_chain_seq(chain)[0])>0])
 		rec_chains = set(list(target["complex"]["chain_rec"]))
 		lig_chains = set(list(target["complex"]["chain_lig"]))
 
@@ -193,16 +236,12 @@ class DockingBenchmark:
 			target["complex"]["chain_rec"] = target["complex"]["chain_lig"]
 			target["complex"]["chain_lig"] = tmp
 		else:
-			raise(Exception("Wrong chains"))
+			raise(Exception("Wrong chains", rec_chains, struct1_chains, lig_chains, struct2_chains))
 
 		bound_complex["receptor"]["structure"] = struct1
 		bound_complex["ligand"]["structure"] = struct2
 
-		r_chains = set([chain.get_id() for chain in bound_complex["receptor"]["structure"].get_chains()])
-		l_chains = set([chain.get_id() for chain in bound_complex["ligand"]["structure"].get_chains()])
-		print(r_chains, l_chains)
-		print(target["complex"]["chain_rec"], target["complex"]["chain_lig"])
-
+				
 		#complex receptor chains sequences
 		for chain in target["complex"]["chain_rec"]:
 			seq, resnums = get_chain_seq(bound_complex["receptor"]["structure"][chain])
@@ -229,9 +268,9 @@ class DockingBenchmark:
 		})
 
 		struct3 = pdb_parser.get_structure('X', unbound_complex["receptor"]["path"])[0]
-		struct3_chains = set([chain.get_id() for chain in struct3.get_chains()])
+		struct3_chains = set([chain.get_id() for chain in struct3.get_chains() if len(get_chain_seq(chain)[0])>0])
 		struct4 = pdb_parser.get_structure('X', unbound_complex["ligand"]["path"])[0]
-		struct4_chains = set([chain.get_id() for chain in struct4.get_chains()])
+		struct4_chains = set([chain.get_id() for chain in struct4.get_chains() if len(get_chain_seq(chain)[0])>0])
 		rec_chains = set(list(target["receptor"]["chain"]))
 		lig_chains = set(list(target["ligand"]["chain"]))
 
@@ -242,7 +281,7 @@ class DockingBenchmark:
 			target["ligand"]["chain"] = target["receptor"]["chain"]
 			target["receptor"]["chain"] = tmp
 		else:
-			raise(Exception("Wrong chains"))
+			raise(Exception("Wrong chains", rec_chains, struct1_chains, lig_chains, struct2_chains))
 
 		unbound_complex["receptor"]["structure"] = struct3
 		unbound_complex["ligand"]["structure"] = struct4
@@ -259,55 +298,15 @@ class DockingBenchmark:
 
 		return bound_complex, unbound_complex
 
-	def match_complexes(self, complex1, complex2, cross_check=False):
-		c1r_c2r = match_chains( complex1["receptor"]["chains"], complex2["receptor"]["chains"] )
-		c1l_c2l = match_chains( complex1["ligand"]["chains"], complex2["ligand"]["chains"] )
 
-		if cross_check:
-			av_id = 0.0
-			print("Receptor <-> receptor:")
-			for chain_id in c1r_c2r.keys():
-				match, identity, mapping = c1r_c2r[chain_id]
-				av_id += identity
-				print(match, identity)
-
-			print("Ligand <-> ligand:")
-			for chain_id in c1l_c2l.keys():
-				match, identity, mapping = c1l_c2l[chain_id]
-				av_id += identity
-				print(match, identity)
-
-			av_id /= float(len(c1r_c2r.keys())+ len(c1l_c2l.keys()))
-
-			print("Ligand <-> receptor:")
-			av_cross_id = 0.0
-			c11_c2r = match_chains( complex1["ligand"]["chains"], complex2["receptor"]["chains"] )
-			for chain_id in c11_c2r.keys():
-				match, identity, mapping = c11_c2r[chain_id]
-				av_cross_id += identity
-				print(match, identity)
-			
-			print("Receptor <-> ligand:")
-			c1r_c2l = match_chains( complex1["receptor"]["chains"], complex2["ligand"]["chains"] )
-			for chain_id in c1r_c2l.keys():
-				match, identity, mapping = c1r_c2l[chain_id]
-				av_cross_id += identity
-				print(match, identity)
-
-			av_cross_id /= float(len(c11_c2r.keys())+ len(c1r_c2l.keys()))
-			
-			print("Norm: %.3f Cross: %.3f"%(av_id, av_cross_id))
-			if av_id < av_cross_id:
-				raise Exception("Receptor and ligand are swapped")
-		
-		return c1r_c2r, c1l_c2l
-
-	def get_unbound_contacts(self, target, contact_dist=5.0):
-		bound_complex, unbound_complex = self.parse_structures(target)
+	def get_unbound_contacts(self, bound_complex, unbound_complex, contact_dist=5.0, align_tol=False, dist_tol=False):
 		brec_cont, blig_cont = self.get_contacts(bound_complex, contact_dist)
-		receptor_match, ligand_match = self.match_complexes(bound_complex, unbound_complex, True)
+		
+		receptor_match = match_chains( bound_complex["receptor"], unbound_complex["receptor"], align_tol, dist_tol)
+		ligand_match = match_chains( bound_complex["ligand"], unbound_complex["ligand"], align_tol, dist_tol)
 				
-		urec_cont = set([])
+		urec_cont = []
+		new_brec_cont = []
 		for chain_id, res_num, res in brec_cont:
 			matching_chain, id, alignment = receptor_match[chain_id]
 			res_idx = bound_complex["receptor"]["chains"][chain_id][1].index(res_num)
@@ -317,11 +316,22 @@ class DockingBenchmark:
 			matching_res_idx = alignment[res_idx]
 			matching_res_num = unbound_complex["receptor"]["chains"][matching_chain][1][matching_res_idx]
 			matching_res = unbound_complex["receptor"]["chains"][matching_chain][0][matching_res_idx]
-			urec_cont.add((matching_chain, matching_res_num, matching_res))
+			urec_cont.append((matching_chain, matching_res_num, matching_res))
+			new_brec_cont.append((chain_id, res_num, res))
 			if matching_res != res:
+				print(chain_id, res_num, res)
+				print(matching_chain, matching_res_num, matching_res)
+				s1 = bound_complex["receptor"]["chains"][chain_id][0]
+				print(bound_complex["receptor"]["chains"][chain_id])
+				print(s1[res_idx])
+				s2 = unbound_complex["receptor"]["chains"][matching_chain][0]
+				print(unbound_complex["receptor"]["chains"][matching_chain])
+				print(s2[matching_res_idx])
+
 				raise(Exception("Residues are not matching", chain_id, res_num, res, ':', matching_chain, matching_res_num, matching_res))
 
-		ulig_cont = set([])
+		ulig_cont = []
+		new_blig_cont = []
 		for chain_id, res_num, res in blig_cont:
 			matching_chain, id, alignment = ligand_match[chain_id]		
 			res_idx = bound_complex["ligand"]["chains"][chain_id][1].index(res_num)
@@ -331,11 +341,12 @@ class DockingBenchmark:
 			matching_res_idx = alignment[res_idx]
 			matching_res_num = unbound_complex["ligand"]["chains"][matching_chain][1][matching_res_idx]
 			matching_res = unbound_complex["ligand"]["chains"][matching_chain][0][matching_res_idx]
-			ulig_cont.add((matching_chain, matching_res_num, matching_res))
+			ulig_cont.append((matching_chain, matching_res_num, matching_res))
+			new_blig_cont.append((chain_id, res_num, res))
 			if matching_res != res:
-				print("Residues are not matching", chain_id, res_num, res, ':', matching_chain, matching_res_num, matching_res)
+				raise(Exception("Residues are not matching", chain_id, res_num, res, ':', matching_chain, matching_res_num, matching_res))
 		
-		return urec_cont, ulig_cont		
+		return urec_cont, ulig_cont, new_brec_cont, new_blig_cont
 
 	def get_target(self, target_name):
 		return self.targets[self.get_target_names().index(target_name)]
@@ -351,11 +362,7 @@ if __name__=='__main__':
 	bc, uc = b.parse_structures(b.targets[0])
 	print(bc["receptor"]["chains"])
 
-	rmatch, lmatch = b.match_complexes(bc, uc, True)
-	
-	cr, cl = b.get_contacts(bc)
-
-	rec, lig = b.get_unbound_contacts(b.targets[0])
+	rec, lig = b.get_unbound_contacts(bc, uc)
 	print(rec)
 	print(lig)
 	

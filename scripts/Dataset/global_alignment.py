@@ -68,7 +68,7 @@ def get_alignment( params ):
 	
 	identity_percentage = float(identical)/float(len(seq1_aligned))
 
-	return mapping, identity_percentage
+	return mapping, identity_percentage, (seq1_aligned, seq2_aligned)
 
 if __name__=='__main__':
 	print(get_alignment(('GCCSLPPCALSNPDYCX', 'LPPCARSNPDYC')))
