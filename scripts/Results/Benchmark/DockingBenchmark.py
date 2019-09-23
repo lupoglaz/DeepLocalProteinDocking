@@ -31,7 +31,6 @@ def get_chain_seq(chain):
 			resnums.append(resnum)
 	return seq, resnums
 
-
 def get_res_dist(struct1, struct2, alignment):
 	struct1_residues = Selection.unfold_entities(struct1, 'R')
 	struct2_residues = Selection.unfold_entities(struct2, 'R')
@@ -83,7 +82,7 @@ def match_chains(structure1, structure2, align_tol=False, dist_tol=False):
 
 
 class DockingBenchmark:
-	def __init__(self, benchmark_dir, table):
+	def __init__(self, benchmark_dir, table, structures_dir):
 		#1QFW_HL deleted
 		#2I25_ added 3LZT_A chain
 		#1OYV_B:I deleted
@@ -91,8 +90,11 @@ class DockingBenchmark:
 		#1Z5Y added 1L6P_A
 		#2H7V added 1MH1_A
 		#2NZ8 added 1MH1_A
+		#3CPH wrong chain in unbound ligand 1G16_C
+		#1JMO_l_b.pdb swapped H and L chains in the structure
 
 		self.benchmark_dir = benchmark_dir
+		self.structures_dir = structures_dir
 		table_path = os.path.join(benchmark_dir, table)
 		self.targets = []
 		difficulty = 0
@@ -112,7 +114,9 @@ class DockingBenchmark:
 					target = OrderedDict({
 						"difficulty": None,
 						"category": None,
-						"IRMSD": None,
+						"irmsd": None,
+						"dasa": None,
+						"version": None,
 						"complex": {
 							"name": None,
 							"chain_rec": None,
@@ -136,7 +140,37 @@ class DockingBenchmark:
 					target["complex"] = self.parse_strucutre_name(sline[0].strip())
 					target["receptor"] = self.parse_strucutre_name(sline[2].strip(), sline[3])
 					target["ligand"] = self.parse_strucutre_name(sline[4].strip(), sline[5])
+					target["irmsd"] = float(sline[6])
+					target["dasa"] = float(sline[7])
+					target["version"] = float(sline[8])
 					self.targets.append(target)
+
+	def save_table(self, table_path):
+		with open(table_path, 'w') as fout:
+			for difficulty in [1, 2, 3]:
+				target_names = self.get_target_names(difficulty=difficulty)
+				if difficulty == 1:
+					fout.write("Rigid-body(%d)\n"%(len(target_names)))
+				elif difficulty == 2:
+					fout.write("Medium Difficulty(%d)\n"%(len(target_names)))
+				elif difficulty == 3:
+					fout.write("Difficult(%d)\n"%(len(target_names)))
+
+				for target_name in target_names:
+					target = self.get_target(target_name)
+					fout.write("%s_%s:%s"%(target["complex"]["name"], target["complex"]["chain_rec"], target["complex"]["chain_lig"]))
+					fout.write('\t')
+					fout.write(target["category"])
+					fout.write('\t')
+					fout.write("%s_%s"%(target["receptor"]["name"], target["receptor"]["chain"]))
+					fout.write('\t')
+					fout.write("%s"%(target["receptor"]["description"]))
+					fout.write('\t')
+					fout.write("%s_%s"%(target["ligand"]["name"], target["ligand"]["chain"]))
+					fout.write('\t')
+					fout.write("%s"%(target["ligand"]["description"]))
+					fout.write('\t')
+					fout.write("%.2f\t%.0f\t%d\n"%(target["irmsd"], target["dasa"], target["version"]))
 	
 	def parse_strucutre_name(self, name, description=None):
 		sname = name.split('_')
@@ -166,8 +200,27 @@ class DockingBenchmark:
 					"description": description
 				}
 
-	def get_target_names(self):
-		return [target["complex"]["name"] for target in self.targets]
+	def get_target_names(self, difficulty=None, category=None):
+		if (difficulty is None) and (category is None):
+			return [target["complex"]["name"] for target in self.targets]
+		elif (not difficulty is None) and (category is None):
+			return [target["complex"]["name"] for target in self.targets if target["difficulty"]==difficulty]
+		elif (difficulty is None) and (not category is None):
+			return [target["complex"]["name"] for target in self.targets if target["category"]==category]
+		else:
+			return [target["complex"]["name"] for target in self.targets if target["difficulty"]==difficulty and target["category"]==category]
+
+	def get_target(self, target_name):
+		return self.targets[self.get_target_names().index(target_name)]
+
+	def get_prob_alignemnts(self):
+		return ['1E6J', '2VIS', '1OYV', '1YVB', '1FC2', '1FQJ', '1GCQ', '1H9D', '1HCF', '1HE1', '1JWH', '1K74', 
+				'1KLU', '1KTZ', '1ML0', '1QA9', '1US7', '1XD3', '1Z0K', '1ZHI', '2B4J', '2OOB', '1NW9', '1HE8',
+				'1I2M', '1XQS', '2CFH', '2OZA', '1H1V', '1JK9', '1R8S', '2IDO']
+				
+	def get_prob_superpos(self):
+		return	['2VIS', '2FD6', '1HIA', '1YVB', '1E96', '1GCQ', '1HE1', '1I4D', '1K74', '2FJU', '3BP8', '1KKL',
+				'1NW9', '2H7V', '2NZ8', '3CPH', '1F6M', '1ZLI', '1H1V', '1IRA', '1JK9', '1JMO', '1Y64']
 
 	def get_contacts(self, complex, contact_dist=5.0):
 		receptor_atoms = Selection.unfold_entities(complex["receptor"]["structure"], 'A')
@@ -207,101 +260,76 @@ class DockingBenchmark:
 		
 		return contacts_rec, contacts_lig
 
-	def parse_structures(self, target):
+	def parse_protein(self, structure_name, target_chains=None):
+		protein = {
+			"path": os.path.join(self.structures_dir, structure_name),
+			"structure": None,
+			"chains": OrderedDict({})
+		}
+		if not os.path.exists(protein["path"]):
+			raise(Exception("File not found", protein["path"]))
+
+		protein["structure"] = pdb_parser.get_structure('X', protein["path"])[0]
+		struct_chains = [chain.get_id() for chain in protein["structure"].get_chains() if len(get_chain_seq(chain)[0])>0 ]
+		
+		if not target_chains is None:
+			table_chains = list(target_chains)
+			if not (struct_chains == table_chains):
+				if set(struct_chains) == set(table_chains):
+					print(structure_name, ":Wrong order of chains in the table")
+				else:
+					raise(Exception(structure_name, "Wrong chains", table_chains, struct_chains))
+		
+		#complex receptor chains sequences
+		for chain in struct_chains:
+			seq, resnums = get_chain_seq(protein["structure"][chain])
+			protein["chains"][chain] = (seq, resnums)
+
+		return protein
+
+	def parse_structures(self, target, suffix=""):
 		
 		bound_complex = OrderedDict({
-			"receptor": {
-				"path": os.path.join(self.benchmark_dir, "structures", target["complex"]["name"]+'_r_b.pdb'),
-				"structure": None,
-				"chains": {}
-			},
-			"ligand": {
-				"path": os.path.join(self.benchmark_dir, "structures", target["complex"]["name"]+'_l_b.pdb'),
-				"structure": None,
-				"chains": {}
-			}
+			"receptor": None,
+			"ligand": None
 		})
-		
-		struct1 = pdb_parser.get_structure('X', bound_complex["receptor"]["path"])[0]
-		struct1_chains = set([chain.get_id() for chain in struct1.get_chains() if len(get_chain_seq(chain)[0])>0 ])
-		struct2 = pdb_parser.get_structure('X', bound_complex["ligand"]["path"])[0]
-		struct2_chains = set([chain.get_id() for chain in struct2.get_chains() if len(get_chain_seq(chain)[0])>0])
-		rec_chains = set(list(target["complex"]["chain_rec"]))
-		lig_chains = set(list(target["complex"]["chain_lig"]))
-
-		if rec_chains == struct1_chains and lig_chains == struct2_chains:
-			pass
-		elif rec_chains == struct2_chains and lig_chains == struct1_chains:
-			tmp = target["complex"]["chain_rec"]
-			target["complex"]["chain_rec"] = target["complex"]["chain_lig"]
-			target["complex"]["chain_lig"] = tmp
-		else:
-			raise(Exception("Wrong chains", rec_chains, struct1_chains, lig_chains, struct2_chains))
-
-		bound_complex["receptor"]["structure"] = struct1
-		bound_complex["ligand"]["structure"] = struct2
-
+		try:
+			bound_complex["receptor"] = self.parse_protein(target["complex"]["name"]+'_r_b.pdb%s'%(suffix), target["complex"]["chain_rec"])
+			bound_complex["ligand"] = self.parse_protein(target["complex"]["name"]+'_l_b.pdb%s'%(suffix), target["complex"]["chain_lig"])
+		except Exception as inst:
+			if inst.args[1] == 'Wrong chains':
+				tmp = target["complex"]["chain_rec"]
+				target["complex"]["chain_rec"] = target["complex"]["chain_lig"]
+				target["complex"]["chain_lig"] = tmp
 				
-		#complex receptor chains sequences
-		for chain in target["complex"]["chain_rec"]:
-			seq, resnums = get_chain_seq(bound_complex["receptor"]["structure"][chain])
-			bound_complex["receptor"]["chains"][chain] = (seq, resnums)
+				bound_complex["receptor"] = self.parse_protein(target["complex"]["name"]+'_r_b.pdb%s'%(suffix), target["complex"]["chain_rec"])
+				bound_complex["ligand"] = self.parse_protein(target["complex"]["name"]+'_l_b.pdb%s'%(suffix), target["complex"]["chain_lig"])
+
+				print('Swapped chains in the table')
 		
-		#complex ligand chains sequences
-		complex_lig_seq = []
-		for chain in target["complex"]["chain_lig"]:
-			seq, resnums = get_chain_seq(bound_complex["ligand"]["structure"][chain])
-			bound_complex["ligand"]["chains"][chain] = (seq, resnums)
-
-
+				
 		unbound_complex = OrderedDict({
-			"receptor": {
-				"path": os.path.join(self.benchmark_dir, "structures", target["complex"]["name"]+'_r_u.pdb'),
-				"structure": None,
-				"chains": {}
-			},
-			"ligand": {
-				"path": os.path.join(self.benchmark_dir, "structures", target["complex"]["name"]+'_l_u.pdb'),
-				"structure": None,
-				"chains": {}
-			}
+			"receptor": None,
+			"ligand": None
 		})
+		try:
+			unbound_complex["receptor"] = self.parse_protein(target["complex"]["name"]+'_r_u.pdb', target["receptor"]["chain"])
+			unbound_complex["ligand"] = self.parse_protein(target["complex"]["name"]+'_l_u.pdb', target["ligand"]["chain"])
+		except Exception as inst:
+			if inst.args[1] == 'Wrong chains':
+				tmp = target["receptor"]["chain"]
+				target["receptor"]["chain"] = target["ligand"]["chain"]
+				target["ligand"]["chain"] = tmp
+				
+				unbound_complex["receptor"] = self.parse_protein(target["complex"]["name"]+'_r_u.pdb', target["receptor"]["chain"])
+				unbound_complex["ligand"] = self.parse_protein(target["complex"]["name"]+'_l_u.pdb', target["ligand"]["chain"])
 
-		struct3 = pdb_parser.get_structure('X', unbound_complex["receptor"]["path"])[0]
-		struct3_chains = set([chain.get_id() for chain in struct3.get_chains() if len(get_chain_seq(chain)[0])>0])
-		struct4 = pdb_parser.get_structure('X', unbound_complex["ligand"]["path"])[0]
-		struct4_chains = set([chain.get_id() for chain in struct4.get_chains() if len(get_chain_seq(chain)[0])>0])
-		rec_chains = set(list(target["receptor"]["chain"]))
-		lig_chains = set(list(target["ligand"]["chain"]))
-
-		if rec_chains == struct3_chains and lig_chains == struct4_chains:
-			pass
-		elif rec_chains == struct4_chains and lig_chains == struct3_chains:
-			tmp = target["ligand"]["chain"]
-			target["ligand"]["chain"] = target["receptor"]["chain"]
-			target["receptor"]["chain"] = tmp
-		else:
-			raise(Exception("Wrong chains", rec_chains, struct1_chains, lig_chains, struct2_chains))
-
-		unbound_complex["receptor"]["structure"] = struct3
-		unbound_complex["ligand"]["structure"] = struct4
-
-		#unbound receptor chains sequences
-		for chain in target["receptor"]["chain"]:
-			seq, resnums = get_chain_seq(unbound_complex["receptor"]["structure"][chain])
-			unbound_complex["receptor"]["chains"][chain] = (seq, resnums)
-		
-		#unbound ligand chains sequences
-		for chain in target["ligand"]["chain"]:
-			seq, resnums = get_chain_seq(unbound_complex["ligand"]["structure"][chain])
-			unbound_complex["ligand"]["chains"][chain] = (seq, resnums)
+				print('Swapped chains in the table')
 
 		return bound_complex, unbound_complex
 
-
 	def get_unbound_contacts(self, bound_complex, unbound_complex, contact_dist=5.0, align_tol=False, dist_tol=False):
 		brec_cont, blig_cont = self.get_contacts(bound_complex, contact_dist)
-		
 		receptor_match = match_chains( bound_complex["receptor"], unbound_complex["receptor"], align_tol, dist_tol)
 		ligand_match = match_chains( bound_complex["ligand"], unbound_complex["ligand"], align_tol, dist_tol)
 				
@@ -348,8 +376,20 @@ class DockingBenchmark:
 		
 		return urec_cont, ulig_cont, new_brec_cont, new_blig_cont
 
-	def get_target(self, target_name):
-		return self.targets[self.get_target_names().index(target_name)]
+	def check_match_permutation(self, protein1, protein2, align_tol=True, dist_tol=True):
+		proteins_match = match_chains( protein1, protein2, align_tol, dist_tol)
+		match = []
+		for chain_idx, chain_name in enumerate(protein1["chains"].keys()):
+			matching_chain_name = proteins_match[chain_name][0]
+			matching_chain_idx = list(protein2["chains"].keys()).index(matching_chain_name)
+			print(chain_idx, chain_name, matching_chain_idx, matching_chain_name)
+			match.append(matching_chain_idx)
+		
+		return sorted(match) != match
+
+
+	
+	
 
 if __name__=='__main__':
 	print(os.listdir(DATA_DIR))
@@ -357,12 +397,24 @@ if __name__=='__main__':
 
 	benchmark_dir = os.path.join(DATA_DIR, "DockingBenchmarkV4")
 	benchmark_list = os.path.join(benchmark_dir, "TableS1.csv")
-	b = DockingBenchmark(benchmark_dir, benchmark_list)
-	
-	bc, uc = b.parse_structures(b.targets[0])
-	print(bc["receptor"]["chains"])
+	benchmark_structures = os.path.join(benchmark_dir, "structures")
+	benchmark = DockingBenchmark(benchmark_dir, benchmark_list, benchmark_structures)
+	for target_idx, target_name in enumerate(benchmark.get_target_names()):
+		print('Processing target', target_name, target_idx)
+		target = benchmark.get_target(target_name)
+		bound_complex, unbound_complex = benchmark.parse_structures(target)
+		
+		print('Bound receptor:', target["complex"]["chain_rec"], ''.join(list(bound_complex["receptor"]["chains"].keys())))
+		print('Bound ligand:', target["complex"]["chain_lig"], ''.join(list(bound_complex["ligand"]["chains"].keys())))
+		print('Unbound receptor:', target["receptor"]["chain"], ''.join(list(unbound_complex["receptor"]["chains"].keys())))
+		print('Unbound ligand:', target["ligand"]["chain"], ''.join(list(unbound_complex["ligand"]["chains"].keys())))
+		
+		perm_rec = benchmark.check_match_permutation(bound_complex["receptor"], unbound_complex["receptor"])
+		if perm_rec:
+			raise Exception("Permutation in receptor")
+		perm_lig = benchmark.check_match_permutation(bound_complex["ligand"], unbound_complex["ligand"])
+		if perm_lig:
+			raise Exception("Permutation in ligand")
 
-	rec, lig = b.get_unbound_contacts(bc, uc)
-	print(rec)
-	print(lig)
+	benchmark.save_table(os.path.join(benchmark_dir, "TableCorrect.csv"))
 	

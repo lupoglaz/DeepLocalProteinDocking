@@ -11,24 +11,15 @@ from TorchProteinLibrary.RMSD import Coords2RMSD
 
 sys.path.append(os.path.join(os.path.dirname(__file__), "../.."))
 from Dataset.processing_utils import _get_contacts, _get_fnat, _get_capri_quality
-
 from DockingBenchmark import DockingBenchmark
+
+import _pickle as pkl
 
 class ZDOCKParser:
 	def __init__(self):
 		self.p2c = PDB2CoordsUnordered()
 		self.rotate = CoordsRotate()
 		self.translate = CoordsTranslate()
-
-		self.target_dict = OrderedDict({"box_size": None,
-						"spacing": None,
-						"switch_num": None,
-						"rec_rand1": None, "rec_rand2": None, "rec_rand3": None,
-						"lig_rand1": None, "lig_rand2": None, "lig_rand3": None,
-						"rec": None, "r1": None, "r2": None, "r3":None,
-						"lig": None, "l1": None, "l2": None, "l3":None,
-						"conformations": []
-						})
 
 		self.ligand = None
 		self.receptor = None
@@ -65,7 +56,17 @@ class ZDOCKParser:
 
 		return out
 
-	def parse_ouput(self, output_file, header_only=True):
+	def parse_output(self, output_file, irmsd_output_file=None, header_only=True):
+		self.target_dict = OrderedDict({"box_size": None,
+						"spacing": None,
+						"switch_num": None,
+						"rec_rand1": None, "rec_rand2": None, "rec_rand3": None,
+						"lig_rand1": None, "lig_rand2": None, "lig_rand3": None,
+						"rec": None, "r1": None, "r2": None, "r3":None,
+						"lig": None, "l1": None, "l2": None, "l3":None,
+						"conformations": [],
+						"irmsd_reported": []
+						})
 
 		with open(output_file) as fin:
 			header = fin.readline().split()
@@ -108,6 +109,11 @@ class ZDOCKParser:
 
 				self.target_dict["conformations"].append((an_x, an_y, an_z, tr_x, tr_y, tr_z, score))
 
+		if not(irmsd_output_file is None):
+			with open(irmsd_output_file) as fin:
+				for line in fin:
+					self.target_dict["irmsd_reported"].append(float(line.split()[1]))
+					
 	def select_atoms(self, protein, atomic_mask):
 		coords, chains, res_names, res_nums, atom_names, num_atoms = protein
 		N = num_atoms[0].item()
@@ -220,8 +226,11 @@ class ZDOCKParser:
 		r1, r2, r3 = self.target_dict["r1"], self.target_dict["r2"], self.target_dict["r3"]
 		lig_rand1, lig_rand2, lig_rand3 = self.target_dict["lig_rand1"], self.target_dict["lig_rand2"], self.target_dict["lig_rand3"]
 		rec_rand1, rec_rand2, rec_rand3 = self.target_dict["rec_rand1"], self.target_dict["rec_rand2"], self.target_dict["rec_rand3"]
-
+		
 		an_x, an_y, an_z, tr_x, tr_y, tr_z, score = self.target_dict["conformations"][conf_num]
+
+		# print(self.target_dict["switch_num"], rec_rand1, rec_rand2, rec_rand3, lig_rand1, lig_rand2, lig_rand3, r1, r2, r3, l1, l2, l3, 
+		# 		an_x, an_y, an_z, tr_x, tr_y, tr_z, box_size, spacing)
 
 		if tr_x >= box_size/2:
 			tr_x -= box_size;
@@ -236,15 +245,19 @@ class ZDOCKParser:
 			
 			Tcenter = torch.tensor([-l1, -l2, -l3], dtype=torch.double, device='cpu').unsqueeze(dim=0)
 			coords_ce = self.translate(coords, Tcenter, num_atoms)
+			# print(coords_ce[0, :3])
 			
 			Rrand = self.getRotationMatrix(lig_rand1, lig_rand2, lig_rand3)
 			coords_rand = self.rotate(coords_ce, Rrand, num_atoms)
+			# print(coords_rand[0, :3])
 
 			Ra = self.getRotationMatrix(an_x, an_y, an_z)
 			coords_rand_a = self.rotate(coords_rand, Ra, num_atoms)
+			# print(coords_rand_a[0, :3])
 
 			T = torch.tensor([-tr_x*spacing + r1, -tr_y*spacing + r2, -tr_z*spacing + r3], dtype=torch.double, device='cpu').unsqueeze(dim=0)
 			coords_out = self.translate(coords_rand_a, T, num_atoms)
+			# print(coords_out[0, :3])
 		
 		else:
 
@@ -281,29 +294,32 @@ class ZDOCKParser:
 		return complex
 
 
-def get_irmsd(benchmark_dir, benchmark_table, zdock_dir, num_conf=1000):
-	benchmark = DockingBenchmark(benchmark_dir, benchmark_table)
+def get_irmsd(benchmark_dir, benchmark_table, natives_dir, decoys_dir, num_conf=1000):
+	benchmark = DockingBenchmark(benchmark_dir, benchmark_table, natives_dir)
 	parser = ZDOCKParser()
 	parser_native = ZDOCKParser()
 	p2c = PDB2CoordsUnordered()
 	
 	result = {}
 
-	problematic_alignments = ['1E6J', '2VIS', '1OYV', '1YVB', '1FC2', '1FQJ', '1GCQ', '1H9D', '1HCF', '1HE1', '1JWH', '1K74', 
-								'1KLU', '1KTZ', '1ML0', '1QA9', '1US7', '1XD3', '1Z0K', '1ZHI', '2B4J', '2OOB', '1NW9', '1HE8',
-								'1I2M', '1XQS', '2CFH', '2OZA']
-	problematic_superposition = ['2VIS', '2FD6', '1HIA', '1YVB', '1E96', '1GCQ', '1HE1', '1I4D', '1K74', '2FJU', '3BP8', '1KKL',
-								'1NW9', '2H7V', '2NZ8']
-	skip = ['1N8O', '1AZS', '1GP2', '1K5D', '2J7P']
+	problematic_alignments = benchmark.get_prob_alignemnts()
+	problematic_superposition = benchmark.get_prob_superpos()
+	skip = ['1N8O', '1AZS', '1GP2', '1K5D', '2J7P', '2O3B', '1FAK', #borked
+			'2VIS', #interface is measured between one of three subunits
+			'1I9R', '1RLB', '1WDW', '1XU1', '1KKL', #symmetrical interfaces
+			'2OOR', '3BP8', #repeat tandems
+			'1IB1', '1BJ1', '1EZU', '1A2K', '1AKJ', 
+			'1F51', '1FC2', '1FCC', '1GCQ', '1I4D', '1JWH', '1ML0' #???
+			]
 	
-	for n, target_name in enumerate(benchmark.get_target_names()[145:]):
+	for n, target_name in enumerate(benchmark.get_target_names()[70:]):
 		# target_name = '1OYV'
 		if target_name in skip:
 			print("Skipping prediction for", target_name, n)	
 			continue
 		print("Processing prediction for", target_name, n)
 		target = benchmark.get_target(target_name)
-		bound_target, unbound_target = benchmark.parse_structures(target)
+		bound_target, unbound_target = benchmark.parse_structures(target, suffix='')
 		try:
 			urec_sel, ulig_sel, brec_sel, blig_sel = benchmark.get_unbound_contacts(bound_target, unbound_target, 
 				align_tol=bool(target_name in problematic_alignments),
@@ -336,44 +352,72 @@ def get_irmsd(benchmark_dir, benchmark_table, zdock_dir, num_conf=1000):
 
 		
 		zdock_output_name = "%s.zd3.0.2.cg.fixed.out"%target_name
-		parser.parse_ouput(os.path.join(zdock_dir, zdock_output_name), False)
+		zdock_irmsd_name = "%s.zd3.0.2.cg.fixed.out.rmsds"%target_name
+		parser.parse_output(os.path.join(decoys_dir, zdock_output_name), os.path.join(decoys_dir, zdock_irmsd_name),
+							header_only=False)
 		parser.receptor = p2c([unbound_target["receptor"]["path"]])
 		parser.ligand = p2c([unbound_target["ligand"]["path"]])
+		init_unbound = parser.get_complex(parser.receptor, parser.ligand)		
 		parser.select_target_CA()
 		parser.select_target_residues(urec_sel, ulig_sel)
-		unbound_interface = parser.get_complex(parser.receptor, parser.ligand)
-
+		init_unbound_int = parser.get_complex(parser.receptor, parser.ligand)
+		
 		parser_native.receptor = p2c([bound_target["receptor"]["path"]])
 		parser_native.ligand = p2c([bound_target["ligand"]["path"]])
+		parser_native.parse_output(os.path.join(decoys_dir, zdock_output_name), os.path.join(decoys_dir, zdock_irmsd_name),
+							header_only=False)
 		parser_native.select_target_CA()
 		parser_native.select_target_residues(brec_sel, blig_sel)
-		bound_interface = parser_native.get_complex(parser_native.receptor, parser_native.ligand)
-
+		init_bound_int = parser_native.get_complex(parser_native.receptor, parser_native.ligand)
+		
 		result[target_name] = []
-
 		for i in range(num_conf):
-			new_ligand = parser.transform_ligand(i)
-			decoy_interface = parser.get_complex(parser.receptor, new_ligand)
-					
+			new_ligand_int = parser.transform_ligand(i)
+			decoy_int = parser.get_complex(parser.receptor, new_ligand_int)	
+								
 			c2rmsd = Coords2RMSD()
-			conf_bound_rmsd = c2rmsd(decoy_interface[0], bound_interface[0], bound_interface[-1])
-			
+			conf_bound_rmsd = c2rmsd(decoy_int[0], init_bound_int[0], init_bound_int[-1])
+
+			if conf_bound_rmsd.item() > (parser.target_dict["irmsd_reported"][i] + 5.0):
+				writePDB("init_unbound.pdb", *(init_unbound))
+				writePDB("init_unbound_interface.pdb", *(init_unbound_int))
+				writePDB("decoy_interface.pdb", *(decoy_int))
+				new_ligand = parser_native.transform_ligand(i)
+				writePDB("decoy_ligand.pdb", *(new_ligand))
+				
+				raise(Exception("Conformation wrong", i, conf_bound_rmsd.item(), parser.target_dict["irmsd_reported"][i]))
+						
 			result[target_name].append( conf_bound_rmsd.item() )
 
 		# break
-	
-	return result
-			
 
+	return result
+
+
+def plot_protein(protein):
+	pass
 
 if __name__=='__main__':
 	benchmark_dir = os.path.join(DATA_DIR, "DockingBenchmarkV4")
-	benchmark_table = os.path.join(benchmark_dir, "TableS1.csv")
-	zdock_dir = os.path.join(LOG_DIR, "ZDOCK", "DockingBenchmarkV4_15deg")
+	benchmark_table = os.path.join(benchmark_dir, "TableCorrect.csv")
+	zdock_dir = os.path.join(LOG_DIR, "ZDOCK", "decoys_bm4_zd3.0.2_15deg_fixed")
+	natives_dir = os.path.join(zdock_dir, 'input_pdbs')
+	natives_dir = os.path.join(benchmark_dir, 'structures')
+	decoys_dir = os.path.join(zdock_dir, 'results')
+	overwrite = True
+		
+	zdock_results_filename = os.path.join(zdock_dir, 'DockingBenchmarkV4_15deg_irmsd.pkl')
+	
+	if (not os.path.exists(zdock_results_filename)) or overwrite:
+		results = get_irmsd(benchmark_dir, benchmark_table, natives_dir, decoys_dir, num_conf=1000)
+		with open(zdock_results_filename, 'wb') as fout:
+			pkl.dump(results, fout)
+	else:
+		with open(zdock_results_filename, 'rb') as fin:
+			results = pkl.load(fin)
 
-	result = get_irmsd(benchmark_dir, benchmark_table, zdock_dir, num_conf=10)
-	for target_name in result.keys():
-		print(target_name, "Min irmsd = ", min(result[target_name]))
+	for target_name in results.keys():
+		print(target_name, "Min irmsd = ", min(results[target_name]))
 	
 	
 
