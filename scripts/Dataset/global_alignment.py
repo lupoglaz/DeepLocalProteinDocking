@@ -38,6 +38,7 @@ def get_alignment( params ):
 	seq1, seq2 = params
 	matrix = matlist.blosum62
 	result = pairwise2.align.globaldx(seq1, seq2, matrix)
+	# result = pairwise2.align.localms(seq1, seq2, 2, -1, -.5, -.1)
 	
 	if len(result)==0:
 		return None, 0.0

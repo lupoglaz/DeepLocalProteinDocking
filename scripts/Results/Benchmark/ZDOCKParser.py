@@ -12,8 +12,10 @@ from TorchProteinLibrary.RMSD import Coords2RMSD
 sys.path.append(os.path.join(os.path.dirname(__file__), "../.."))
 from Dataset.processing_utils import _get_contacts, _get_fnat, _get_capri_quality
 from DockingBenchmark import DockingBenchmark
+from VisualizeBenchmark import ProteinStructure, unite_proteins
 
 import _pickle as pkl
+
 
 class ZDOCKParser:
 	def __init__(self):
@@ -113,79 +115,7 @@ class ZDOCKParser:
 			with open(irmsd_output_file) as fin:
 				for line in fin:
 					self.target_dict["irmsd_reported"].append(float(line.split()[1]))
-					
-	def select_atoms(self, protein, atomic_mask):
-		coords, chains, res_names, res_nums, atom_names, num_atoms = protein
-		N = num_atoms[0].item()
-		
-		isSel = atomic_mask
-		isSel_coords = torch.stack([atomic_mask for i in range(3)], dim=1).unsqueeze(dim=0)
-		isSel_names = torch.stack([atomic_mask for i in range(4)], dim=1).unsqueeze(dim=0)	
-		num_sel_atoms =  atomic_mask.sum().item()
-		sel_num_atoms = torch.tensor([num_sel_atoms], dtype=torch.int, device='cpu')	
-		
-		coords = coords.view(1, N, 3)
-		sel_coords = torch.masked_select(coords, isSel_coords).view(1, num_sel_atoms*3).contiguous()
-		sel_chains = torch.masked_select(chains, isSel_names).view(1, num_sel_atoms, 4).contiguous()
-		sel_resnames = torch.masked_select(res_names, isSel_names).view(1, num_sel_atoms, 4).contiguous()
-		sel_resnums = torch.masked_select(res_nums, isSel).view(1, num_sel_atoms).contiguous()
-		sel_atom_names = torch.masked_select(atom_names, isSel_names).view(1, num_sel_atoms, 4).contiguous()
-				
-		return sel_coords, sel_chains, sel_resnames, sel_resnums, sel_atom_names, sel_num_atoms
-
-	def select_atoms_seq(self, protein, atom_list):
-		coords, chains, res_names, res_nums, atom_names, num_atoms = protein
-		N = num_atoms[0].item()
-		
-		coords = coords.view(1, N, 3)
-		sel_coords, sel_chains, sel_resnames, sel_resnums, sel_atom_names = [], [], [], [], []
-		sel_num_atoms = 0
-		for chain, res_num, res_name in atom_list:
-			for i in range(N):
-				if (chain == str(chr(chains[0, i, 0].item()))) and (res_num == res_nums[0, i].item()):
-					sel_coords.append(coords[:, i, :])
-					sel_chains.append(chains[:, i, :])
-					sel_resnames.append(res_names[:, i, :])
-					sel_resnums.append(res_nums[:, i])
-					sel_atom_names.append(atom_names[:, i, :])
-					sel_num_atoms += 1
-		
-		sel_coords = torch.stack(sel_coords, dim=1).view(1, sel_num_atoms*3).contiguous()
-		sel_chains = torch.stack(sel_chains, dim=1).contiguous()
-		sel_resnames = torch.stack(sel_resnames, dim=1).contiguous()
-		sel_resnums = torch.stack(sel_resnums, dim=1).contiguous()
-		sel_atom_names = torch.stack(sel_atom_names, dim=1).contiguous()
-		sel_num_atoms = torch.tensor([sel_num_atoms], dtype=torch.int, device='cpu').contiguous()
-				
-		return sel_coords, sel_chains, sel_resnames, sel_resnums, sel_atom_names, sel_num_atoms
-	
-	def make_CA_mask(self, protein):
-		atom_names = protein[4]
-		is0C = torch.eq(atom_names[:,:,0], 67).squeeze()
-		is1A = torch.eq(atom_names[:,:,1], 65).squeeze()
-		is20 = torch.eq(atom_names[:,:,2], 0).squeeze()
-		isCA = is0C*is1A*is20
-		
-		return isCA
-
-	def read_targets(self, pdb_dir):
-		p2c = PDB2CoordsUnordered()
-		self.ligand = p2c([os.path.join(pdb_dir, self.target_dict["lig"])])
-		self.receptor = p2c([os.path.join(pdb_dir, self.target_dict["rec"])])
-
-	def read_native(self, receptor_path, ligand_path):
-		p2c = PDB2CoordsUnordered()
-		self.ligand = p2c([ligand_path])
-		self.receptor = p2c([receptor_path])
-
-	def select_target_CA(self):
-		self.receptor = self.select_atoms(self.receptor, self.make_CA_mask(self.receptor))
-		self.ligand = self.select_atoms(self.ligand, self.make_CA_mask(self.ligand))
-
-	def select_target_residues(self, rec_residues, lig_residues):
-		self.receptor = self.select_atoms_seq(self.receptor, rec_residues)
-		self.ligand = self.select_atoms_seq(self.ligand, lig_residues)
-		
+						
 	def getRotationMatrix(self, psi, theta, phi, rev=0):
 		if rev == 0:
 			r11 = cos(psi)*cos(phi)  -  sin(psi)*cos(theta)*sin(phi)
@@ -218,8 +148,7 @@ class ZDOCKParser:
 							dtype=torch.double, device='cpu')
 		return R.unsqueeze(dim=0)
 
-
-	def transform_ligand(self, conf_num):
+	def transform_ligand(self, ligand, conf_num):
 		box_size = self.target_dict["box_size"]
 		spacing = self.target_dict["spacing"]
 		l1, l2, l3 = self.target_dict["l1"], self.target_dict["l2"], self.target_dict["l3"]
@@ -239,8 +168,8 @@ class ZDOCKParser:
 		if tr_z >= box_size/2:
 			tr_z -= box_size
 
-		num_atoms = self.ligand[-1]
-		coords = self.ligand[0]
+		num_atoms = ligand[-1]
+		coords = ligand[0]
 		if self.target_dict["switch_num"] is None:
 			
 			Tcenter = torch.tensor([-l1, -l2, -l3], dtype=torch.double, device='cpu').unsqueeze(dim=0)
@@ -276,22 +205,9 @@ class ZDOCKParser:
 			T = torch.tensor([l1, l2, l3], dtype=torch.double, device='cpu').unsqueeze(dim=0)
 			coords_out = self.translate(coords_rand_a, T, num_atoms)
 
-		old_coords, lchains, lres_names, lres_nums, latom_names, lnum_atoms = self.ligand
+		old_coords, lchains, lres_names, lres_nums, latom_names, lnum_atoms = ligand
 		return (coords_out, lchains, lres_names, lres_nums, latom_names, lnum_atoms)
 
-
-	def get_complex(self, receptor, ligand):
-		lcoords, lchains, lres_names, lres_nums, latom_names, lnum_atoms = ligand
-		rcoords, rchains, rres_names, rres_nums, ratom_names, rnum_atoms = receptor
-		ccoords = torch.cat([lcoords, rcoords], dim=1).contiguous()
-		cchains = torch.cat([lchains, rchains], dim=1).contiguous()
-		cres_names = torch.cat([lres_names, rres_names], dim=1).contiguous()
-		cres_nums = torch.cat([lres_nums, rres_nums], dim=1).contiguous()
-		catom_names = torch.cat([latom_names, ratom_names], dim=1).contiguous()
-		cnum_atoms = lnum_atoms + rnum_atoms
-
-		complex = (ccoords, cchains, cres_names, cres_nums, catom_names, cnum_atoms)
-		return complex
 
 
 def get_irmsd(benchmark_dir, benchmark_table, natives_dir, decoys_dir, num_conf=1000):
@@ -304,90 +220,71 @@ def get_irmsd(benchmark_dir, benchmark_table, natives_dir, decoys_dir, num_conf=
 
 	problematic_alignments = benchmark.get_prob_alignemnts()
 	problematic_superposition = benchmark.get_prob_superpos()
-	skip = ['1N8O', '1AZS', '1GP2', '1K5D', '2J7P', '2O3B', '1FAK', #borked
-			'2VIS', #interface is measured between one of three subunits
-			'1I9R', '1RLB', '1WDW', '1XU1', '1KKL', #symmetrical interfaces
-			'2OOR', '3BP8', #repeat tandems
-			'1IB1', '1BJ1', '1EZU', '1A2K', '1AKJ', 
-			'1F51', '1FC2', '1FCC', '1GCQ', '1I4D', '1JWH', '1ML0' #???
+	skip = ['1N8O', '1AZS', '1GP2', '1K5D', '2J7P', '2O3B', '1FAK', '1A2K', '1HCF', #double free corruption
+			'2VIS', '1FC2', '1GCQ', '2VDB', '1ZM4', '2H7V', '3CPH', '1E4K', '2HMI', '1ZLI', '2I9B', '1NW9', #interface is measured between one of three subunits
+			'1XU1', #segmentation fault
+			'1EER' #chains problem
 			]
 	
-	for n, target_name in enumerate(benchmark.get_target_names()[70:]):
+	for n, target_name in enumerate(benchmark.get_target_names()):
 		# target_name = '1OYV'
 		if target_name in skip:
 			print("Skipping prediction for", target_name, n)	
 			continue
 		print("Processing prediction for", target_name, n)
 		target = benchmark.get_target(target_name)
-		bound_target, unbound_target = benchmark.parse_structures(target, suffix='')
-		try:
-			urec_sel, ulig_sel, brec_sel, blig_sel = benchmark.get_unbound_contacts(bound_target, unbound_target, 
-				align_tol=bool(target_name in problematic_alignments),
-				dist_tol=bool(target_name in problematic_superposition)
-				)
-			
-		except Exception as inst:
-			if inst.args[0] == "Alignment is bad":
-				print(target_name, inst.args[0])
-				print(inst.args[1], inst.args[2])
-				print(inst.args[3][0])
-				print(inst.args[3][1])
-				if target_name in problematic_alignments:
-					pass
-				else:
-					raise inst
-			
-			elif inst.args[0] == "Best match is bad":
-				print(target_name, inst.args[0])
-				print(inst.args[1], inst.args[2])
-				print(inst.args[3][0])
-				print(inst.args[3][1])
-				print('Best rmsd = ', inst.args[4])
-				if target_name in problematic_superposition:
-					pass
-				else:
-					raise inst
-			else:
-				raise inst
+		bound_target, unbound_target = benchmark.parse_structures(target)
+		interfaces = benchmark.get_unbound_interfaces(bound_target, unbound_target)
+		N = len(interfaces)
 
-		
 		zdock_output_name = "%s.zd3.0.2.cg.fixed.out"%target_name
 		zdock_irmsd_name = "%s.zd3.0.2.cg.fixed.out.rmsds"%target_name
 		parser.parse_output(os.path.join(decoys_dir, zdock_output_name), os.path.join(decoys_dir, zdock_irmsd_name),
 							header_only=False)
-		parser.receptor = p2c([unbound_target["receptor"]["path"]])
-		parser.ligand = p2c([unbound_target["ligand"]["path"]])
-		init_unbound = parser.get_complex(parser.receptor, parser.ligand)		
-		parser.select_target_CA()
-		parser.select_target_residues(urec_sel, ulig_sel)
-		init_unbound_int = parser.get_complex(parser.receptor, parser.ligand)
+
+		unbound_receptor = ProteinStructure(*p2c([unbound_target["receptor"]["path"]]))
+		unbound_receptor.set(*unbound_receptor.select_CA())
+		unbound_ligand = ProteinStructure(*p2c([unbound_target["ligand"]["path"]]))
+		unbound_ligand.set(*unbound_ligand.select_CA())
 		
-		parser_native.receptor = p2c([bound_target["receptor"]["path"]])
-		parser_native.ligand = p2c([bound_target["ligand"]["path"]])
-		parser_native.parse_output(os.path.join(decoys_dir, zdock_output_name), os.path.join(decoys_dir, zdock_irmsd_name),
-							header_only=False)
-		parser_native.select_target_CA()
-		parser_native.select_target_residues(brec_sel, blig_sel)
-		init_bound_int = parser_native.get_complex(parser_native.receptor, parser_native.ligand)
 		
+		#This interface will be rotated later
+		unbound_interfaces = []
+		for urec_sel, ulig_sel, brec_sel, blig_sel in interfaces:
+			rec = ProteinStructure(*unbound_receptor.select_residues_list(urec_sel))
+			lig = ProteinStructure(*unbound_ligand.select_residues_list(ulig_sel))
+			unbound_interfaces.append( (rec, lig) )
+		
+
+		bound_receptor = ProteinStructure(*p2c([bound_target["receptor"]["path"]]))
+		bound_receptor.set(*bound_receptor.select_CA())
+		bound_ligand = ProteinStructure(*p2c([bound_target["ligand"]["path"]]))
+		bound_ligand.set(*bound_ligand.select_CA())
+
+		#This interface is static
+		bound_interfaces = []
+		for urec_sel, ulig_sel, brec_sel, blig_sel in interfaces:
+			rec = ProteinStructure(*bound_receptor.select_residues_list(brec_sel))
+			lig = ProteinStructure(*bound_ligand.select_residues_list(blig_sel))
+			cplx = unite_proteins(rec, lig)
+			bound_interfaces.append(cplx)
+
+		c2rmsd = Coords2RMSD()	
 		result[target_name] = []
 		for i in range(num_conf):
-			new_ligand_int = parser.transform_ligand(i)
-			decoy_int = parser.get_complex(parser.receptor, new_ligand_int)	
-								
-			c2rmsd = Coords2RMSD()
-			conf_bound_rmsd = c2rmsd(decoy_int[0], init_bound_int[0], init_bound_int[-1])
+			all_rmsd = []
+			for rec, lig in unbound_interfaces:
+				new_lig = ProteinStructure(*parser.transform_ligand(lig.get(), i))
+				mobile_cplx = unite_proteins(rec, new_lig)
+				for static_cplx in bound_interfaces:
+					all_rmsd.append(c2rmsd(mobile_cplx.coords, static_cplx.coords, static_cplx.numatoms).item())
 
-			if conf_bound_rmsd.item() > (parser.target_dict["irmsd_reported"][i] + 5.0):
-				writePDB("init_unbound.pdb", *(init_unbound))
-				writePDB("init_unbound_interface.pdb", *(init_unbound_int))
-				writePDB("decoy_interface.pdb", *(decoy_int))
-				new_ligand = parser_native.transform_ligand(i)
-				writePDB("decoy_ligand.pdb", *(new_ligand))
-				
-				raise(Exception("Conformation wrong", i, conf_bound_rmsd.item(), parser.target_dict["irmsd_reported"][i]))
+			min_rmsd = min(all_rmsd)
+			
+			if min_rmsd > (parser.target_dict["irmsd_reported"][i] + 5.0):
+				raise(Exception("Conformation wrong", i, min_rmsd, parser.target_dict["irmsd_reported"][i]))
 						
-			result[target_name].append( conf_bound_rmsd.item() )
+			result[target_name].append( min_rmsd )
 
 		# break
 

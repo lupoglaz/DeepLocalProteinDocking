@@ -9,13 +9,15 @@ from src import LOG_DIR, DATA_DIR
 from TorchProteinLibrary.FullAtomModel import PDB2CoordsUnordered, CoordsTranslate, CoordsRotate, writePDB
 
 sys.path.append(os.path.join(os.path.dirname(__file__), "../.."))
-from scripts.Dataset.processing_utils import _get_contacts, _get_fnat, _get_capri_quality
 from scripts.Dataset.global_alignment import get_alignment
 
 import Bio.PDB
 from Bio.PDB.Polypeptide import d3_to_index, dindex_to_1, standard_aa_names
 from Bio.PDB import PDBParser, NeighborSearch, Selection
 pdb_parser = PDBParser(QUIET=True)
+
+import subprocess
+import json
 
 def get_chain_seq(chain):
 	seq = ""
@@ -45,7 +47,45 @@ def get_res_dist(struct1, struct2, alignment):
 
 	return av_dist/float(len(alignment))
 
-def match_chains(structure1, structure2, align_tol=False, dist_tol=False):
+def get_self_match(structure, align_tol=0.8):
+	chains = structure["chains"]
+	matches = {}
+	for chain1 in chains.keys():
+		seq1, resnum1 = chains[chain1]
+		matches[chain1] = []
+		for chain2 in chains.keys():
+			if chain1 == chain2 : continue
+			seq2, resnum2 = chains[chain2]
+			alignment, global_id, seq_aligned = get_alignment( (seq1, seq2) )
+			if global_id >= align_tol:
+				matches[chain1].append( (chain2, global_id, dict(alignment)) )
+	return matches
+
+def get_symmetry(protein_path, align_tol=0.8, rmsd_tol=5.0, anans_path="./tools/ananas"):
+	exec_path = os.path.abspath(anans_path)
+	prot_abs_path = os.path.abspath(protein_path)
+	tmp_output_path = os.path.abspath('tmp.json')
+	process = subprocess.check_output([exec_path, prot_abs_path, "-C", str(rmsd_tol), "-p", "-a", "-j", tmp_output_path])
+	
+	with open(tmp_output_path, "r") as fin:
+		data = json.load(fin)
+	
+	if data is None:
+		return None
+		print(str(process))
+
+	permutations = []
+
+	for symmetry in data:
+		for transform in symmetry['transforms']:
+			permutations.append(transform['permutation'])
+			for i in range(transform['ORDER']-1):
+				permutations.append([permutations[-1][i] for i in transform['permutation']])
+				
+
+	return permutations
+
+def get_best_match(structure1, structure2, align_tol=False, dist_tol=False):
 	chain_match = {}
 	
 	chains1 = structure1["chains"]
@@ -80,6 +120,19 @@ def match_chains(structure1, structure2, align_tol=False, dist_tol=False):
 				
 	return chain_match
 
+def get_match(structure1, structure2, chain_match, align_tol=0.6):
+	match = {}
+	chains1 = structure1["chains"]
+	chains2 = structure2["chains"]
+	for chain1 in chains1.keys():
+		seq1, resnum1 = chains1[chain1]
+		chain2 = chain_match[chain1]
+		seq2, resnum2 = chains2[chain2]
+		alignment, global_id, seq_aligned = get_alignment( (seq1, seq2) )
+		if global_id < align_tol:
+			return None
+		match[chain1] = (chain2, global_id, dict(alignment))
+	return match
 
 class DockingBenchmark:
 	def __init__(self, benchmark_dir, table, structures_dir):
@@ -217,7 +270,7 @@ class DockingBenchmark:
 		return ['1E6J', '2VIS', '1OYV', '1YVB', '1FC2', '1FQJ', '1GCQ', '1H9D', '1HCF', '1HE1', '1JWH', '1K74', 
 				'1KLU', '1KTZ', '1ML0', '1QA9', '1US7', '1XD3', '1Z0K', '1ZHI', '2B4J', '2OOB', '1NW9', '1HE8',
 				'1I2M', '1XQS', '2CFH', '2OZA', '1H1V', '1JK9', '1R8S', '2IDO']
-				
+
 	def get_prob_superpos(self):
 		return	['2VIS', '2FD6', '1HIA', '1YVB', '1E96', '1GCQ', '1HE1', '1I4D', '1K74', '2FJU', '3BP8', '1KKL',
 				'1NW9', '2H7V', '2NZ8', '3CPH', '1F6M', '1ZLI', '1H1V', '1IRA', '1JK9', '1JMO', '1Y64']
@@ -328,56 +381,60 @@ class DockingBenchmark:
 
 		return bound_complex, unbound_complex
 
-	def get_unbound_contacts(self, bound_complex, unbound_complex, contact_dist=5.0, align_tol=False, dist_tol=False):
-		brec_cont, blig_cont = self.get_contacts(bound_complex, contact_dist)
-		receptor_match = match_chains( bound_complex["receptor"], unbound_complex["receptor"], align_tol, dist_tol)
-		ligand_match = match_chains( bound_complex["ligand"], unbound_complex["ligand"], align_tol, dist_tol)
-				
-		urec_cont = []
-		new_brec_cont = []
-		for chain_id, res_num, res in brec_cont:
-			matching_chain, id, alignment = receptor_match[chain_id]
-			res_idx = bound_complex["receptor"]["chains"][chain_id][1].index(res_num)
+	def transfer_selection(self, selection, structure_src, structure_dst, match):
+		selection_src = []
+		selection_dst = []
+		for chain_id, res_num, res in selection:
+			matching_chain, id, alignment = match[chain_id]
+			res_idx = structure_src["chains"][chain_id][1].index(res_num)
 			if not res_idx in alignment.keys():
 				print("Skipping residue", chain_id, res_num, res)
 				continue
 			matching_res_idx = alignment[res_idx]
-			matching_res_num = unbound_complex["receptor"]["chains"][matching_chain][1][matching_res_idx]
-			matching_res = unbound_complex["receptor"]["chains"][matching_chain][0][matching_res_idx]
-			urec_cont.append((matching_chain, matching_res_num, matching_res))
-			new_brec_cont.append((chain_id, res_num, res))
-			if matching_res != res:
-				print(chain_id, res_num, res)
-				print(matching_chain, matching_res_num, matching_res)
-				s1 = bound_complex["receptor"]["chains"][chain_id][0]
-				print(bound_complex["receptor"]["chains"][chain_id])
-				print(s1[res_idx])
-				s2 = unbound_complex["receptor"]["chains"][matching_chain][0]
-				print(unbound_complex["receptor"]["chains"][matching_chain])
-				print(s2[matching_res_idx])
-
-				raise(Exception("Residues are not matching", chain_id, res_num, res, ':', matching_chain, matching_res_num, matching_res))
-
-		ulig_cont = []
-		new_blig_cont = []
-		for chain_id, res_num, res in blig_cont:
-			matching_chain, id, alignment = ligand_match[chain_id]		
-			res_idx = bound_complex["ligand"]["chains"][chain_id][1].index(res_num)
-			if not res_idx in alignment.keys():
-				print("Skipping residue", chain_id, res_num, res)
-				continue
-			matching_res_idx = alignment[res_idx]
-			matching_res_num = unbound_complex["ligand"]["chains"][matching_chain][1][matching_res_idx]
-			matching_res = unbound_complex["ligand"]["chains"][matching_chain][0][matching_res_idx]
-			ulig_cont.append((matching_chain, matching_res_num, matching_res))
-			new_blig_cont.append((chain_id, res_num, res))
+			matching_res_num = structure_dst["chains"][matching_chain][1][matching_res_idx]
+			matching_res = structure_dst["chains"][matching_chain][0][matching_res_idx]
+			selection_dst.append((matching_chain, matching_res_num, matching_res))
+			selection_src.append((chain_id, res_num, res))
 			if matching_res != res:
 				raise(Exception("Residues are not matching", chain_id, res_num, res, ':', matching_chain, matching_res_num, matching_res))
 		
-		return urec_cont, ulig_cont, new_brec_cont, new_blig_cont
+		return selection_src, selection_dst
+	
+	def get_symmetric_selections(self, protein, selection):
+		permutations = get_symmetry(protein["path"])
+		if permutations is None:
+			permutations = [[i for i, chain in enumerate(protein["chains"].keys())]]
+		permuted_selections = []
+		for permutation in permutations:
+			chain_list = list(protein["chains"].keys())
+			permuted_chain_list = [chain_list[i] for i in permutation]
+			chain_match = dict(zip(chain_list, permuted_chain_list))
+			self_match = get_match(protein, protein, chain_match, align_tol=0.5)
+			if self_match is None:
+				continue
+			permuted_selections.append(self.transfer_selection(selection, protein, protein, self_match))
+		return permuted_selections
+
+	def get_unbound_interfaces(self, bound_complex, unbound_complex, contact_dist=5.0, align_tol=False, dist_tol=False):
+		brec_cont, blig_cont = self.get_contacts(bound_complex, contact_dist)
+		
+		brec_sym_cont = self.get_symmetric_selections(bound_complex["receptor"], brec_cont)
+		blig_sym_cont = self.get_symmetric_selections(bound_complex["ligand"], blig_cont)
+
+		receptor_match = get_best_match( bound_complex["receptor"], unbound_complex["receptor"], True, True)
+		ligand_match = get_best_match( bound_complex["ligand"], unbound_complex["ligand"], True, True)
+		
+		interfaces = []
+		for _, receptor_interface in brec_sym_cont:
+			for _, ligand_interface in blig_sym_cont:
+				new_brec_cont, urec_cont = self.transfer_selection(receptor_interface, bound_complex["receptor"], unbound_complex["receptor"], receptor_match)
+				new_blig_cont, ulig_cont = self.transfer_selection(ligand_interface, bound_complex["ligand"], unbound_complex["ligand"], ligand_match)
+				interfaces.append( (urec_cont, ulig_cont, new_brec_cont, new_blig_cont) )
+		
+		return interfaces
 
 	def check_match_permutation(self, protein1, protein2, align_tol=True, dist_tol=True):
-		proteins_match = match_chains( protein1, protein2, align_tol, dist_tol)
+		proteins_match = get_best_match( protein1, protein2, align_tol, dist_tol)
 		match = []
 		for chain_idx, chain_name in enumerate(protein1["chains"].keys()):
 			matching_chain_name = proteins_match[chain_name][0]
@@ -387,8 +444,23 @@ class DockingBenchmark:
 		
 		return sorted(match) != match
 
+	def check_symmetry(self, complex, align_tol=0.8):
+		receptor_sym = False		
+		receptor_self_match = get_self_match(complex["receptor"], align_tol=align_tol)
+		for chain1 in receptor_self_match.keys():
+			for chain2, global_id, alignment in receptor_self_match[chain1]:
+				if chain1 != chain2:
+					receptor_sym = True
+		
+		ligand_sym = False
+		ligand_self_match = get_self_match(complex["ligand"], align_tol=align_tol)
+		for chain1 in ligand_self_match.keys():	
+			for chain2, global_id, alignment in ligand_self_match[chain1]:
+				if chain1 != chain2:
+					ligand_sym = True
+						
+		return receptor_sym, ligand_sym
 
-	
 	
 
 if __name__=='__main__':
@@ -399,7 +471,7 @@ if __name__=='__main__':
 	benchmark_list = os.path.join(benchmark_dir, "TableS1.csv")
 	benchmark_structures = os.path.join(benchmark_dir, "structures")
 	benchmark = DockingBenchmark(benchmark_dir, benchmark_list, benchmark_structures)
-	for target_idx, target_name in enumerate(benchmark.get_target_names()):
+	for target_idx, target_name in enumerate(benchmark.get_target_names()[11:]):
 		print('Processing target', target_name, target_idx)
 		target = benchmark.get_target(target_name)
 		bound_complex, unbound_complex = benchmark.parse_structures(target)
@@ -415,6 +487,18 @@ if __name__=='__main__':
 		perm_lig = benchmark.check_match_permutation(bound_complex["ligand"], unbound_complex["ligand"])
 		if perm_lig:
 			raise Exception("Permutation in ligand")
+
+		print('Symmetry:')
+		rec_sym, lig_sym = benchmark.check_symmetry(bound_complex)
+		print(rec_sym, lig_sym)
+		if rec_sym:
+			get_symmetry(bound_complex["receptor"]["path"])
+			raise Exception("Symmetry detected")
+		if lig_sym:
+			get_symmetry(bound_complex["ligand"]["path"])
+			raise Exception("Symmetry detected")
+
+		break
 
 	benchmark.save_table(os.path.join(benchmark_dir, "TableCorrect.csv"))
 	
