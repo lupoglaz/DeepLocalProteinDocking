@@ -8,7 +8,11 @@ To plot addtional losses, comment the line 167 and change the arguments in the f
 ![alt text](./Fig/LocalSE3MultiResReprScalar_addLosses.png)
 The training_neg loss is almost always zero, therefore we can't see it on the log-plot. Output gap indicates the difference in ranking scores between positive and negative examples.
 
-# Benchmark results
+# NEW benchmark results
+We additionally compared our algorithm with ZDOCK and rewrote the whole evaluation procedure. It is not located 
+[here](Benchmark/README.md)
+
+# OLD Benchmark results
 The benchmark results can be computed using script *scripts/Results/PlotBenchmark.py*. This script is quite a mess, sorry for this.
 
 It does few things:

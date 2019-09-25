@@ -104,7 +104,6 @@ class ProteinStructure:
 
 		for chain in chains:
 			prot_chain = self.select_chain(chain)
-			print(chain, prot_chain[-1].item())
 			coords = prot_chain[0].view(1, prot_chain[-1].item(), 3)
 			sx, sy, sz = coords[0,:,0].numpy(), coords[0,:,1].numpy(), coords[0,:,2].numpy()
 			if type=='line':
