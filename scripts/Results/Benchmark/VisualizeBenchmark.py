@@ -159,7 +159,7 @@ if __name__=='__main__':
 	benchmark = DockingBenchmark(benchmark_dir, benchmark_list, benchmark_structures)
 
 	p2c = PDB2CoordsUnordered()
-	target_name = '2VIS'
+	target_name = '1A2K'
 	target = benchmark.get_target(target_name)
 	bound_complex, unbound_complex = benchmark.parse_structures(target)
 		
@@ -173,25 +173,25 @@ if __name__=='__main__':
 	bound_ligand = ProteinStructure(*p2c([bound_complex["ligand"]["path"]]))
 	bound_ligand.set(*bound_ligand.select_CA())
 
-	# fig = plt.figure()
-	# axis = p3.Axes3D(fig)
-	# cmap = matplotlib.cm.get_cmap('Set1')
-	# bound_ligand.plot_coords(axis, args={"color":"grey"})
+	fig = plt.figure()
+	axis = p3.Axes3D(fig)
+	cmap = matplotlib.cm.get_cmap('Set1')
+	bound_ligand.plot_coords(axis, args={"color":"grey"})
 
-	# brec_cont, blig_cont = benchmark.get_contacts(bound_complex, 5.0)
-	# selections = benchmark.get_symmetric_selections(bound_complex["ligand"], blig_cont)
-	# i = 0
-	# colors = ["red", "blue"]
-	# for selection_src, selection_dst in selections:
-	# 	print(selection_dst)
-	# 	bound_lig_interface = ProteinStructure(*bound_ligand.select_residues_list(selection_dst))
-	# 	bound_lig_interface.plot_coords(axis, type='scatter', args={"color":colors[i] ,"s":30})
-	# 	i+=1	
+	brec_cont, blig_cont = benchmark.get_contacts(bound_complex, 5.0)
+	selections = benchmark.get_symmetric_selections(bound_complex["ligand"], blig_cont)
+	i = 0
+	colors = ["red", "blue"]
+	for selection_src, selection_dst in selections:
+		print(selection_dst)
+		bound_lig_interface = ProteinStructure(*bound_ligand.select_residues_list(selection_dst))
+		bound_lig_interface.plot_coords(axis, type='scatter', args={"color":colors[i] ,"s":30})
+		i+=1	
 
-	# axis.legend()
-	# plt.show()
+	axis.legend()
+	plt.show()
 
-	# sys.exit()
+	sys.exit()
 
 	# selections = benchmark.get_symmetric_selections(bound_complex["ligand"], blig_cont)
 	# for selection_src, selection_dst in selections:

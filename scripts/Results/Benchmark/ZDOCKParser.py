@@ -18,13 +18,11 @@ import _pickle as pkl
 
 
 class ZDOCKParser:
-	def __init__(self):
+	def __init__(self, decoys_dir):
 		self.p2c = PDB2CoordsUnordered()
 		self.rotate = CoordsRotate()
 		self.translate = CoordsTranslate()
-
-		self.ligand = None
-		self.receptor = None
+		self.decoys_dir = decoys_dir
 			
 	def __str__(self):
 		keys = list(self.target_dict.keys())
@@ -58,7 +56,14 @@ class ZDOCKParser:
 
 		return out
 
-	def parse_output(self, output_file, irmsd_output_file=None, header_only=True):
+	def parse_output(self, target_name, header_only=True):
+		zdock_output_name = "%s.zd3.0.2.cg.fixed.out"%target_name
+		zdock_irmsd_name = "%s.zd3.0.2.cg.fixed.out.rmsds"%target_name
+		output_file = os.path.join(self.decoys_dir, "results", zdock_output_name)
+		irmsd_output_file = os.path.join(self.decoys_dir, "results", zdock_irmsd_name)
+		if not os.path.exists(output_file):
+			raise(Exception("File does not exist:", output_file))
+			return None
 		self.target_dict = OrderedDict({"box_size": None,
 						"spacing": None,
 						"switch_num": None,
@@ -115,7 +120,12 @@ class ZDOCKParser:
 			with open(irmsd_output_file) as fin:
 				for line in fin:
 					self.target_dict["irmsd_reported"].append(float(line.split()[1]))
-						
+
+		return self.target_dict
+
+	def load_protein(self, path):
+		return self.p2c(path)
+
 	def getRotationMatrix(self, psi, theta, phi, rev=0):
 		if rev == 0:
 			r11 = cos(psi)*cos(phi)  -  sin(psi)*cos(theta)*sin(phi)
@@ -210,24 +220,17 @@ class ZDOCKParser:
 
 
 
-def get_irmsd(benchmark_dir, benchmark_table, natives_dir, decoys_dir, num_conf=1000):
-	benchmark = DockingBenchmark(benchmark_dir, benchmark_table, natives_dir)
-	parser = ZDOCKParser()
-	parser_native = ZDOCKParser()
-	p2c = PDB2CoordsUnordered()
-	
+def get_irmsd(benchmark, parser, num_conf=1000):
 	result = {}
-
-	problematic_alignments = benchmark.get_prob_alignemnts()
+	p2c = PDB2CoordsUnordered()
+	problematic_alignments = benchmark.get_prob_alignments()
 	problematic_superposition = benchmark.get_prob_superpos()
-	skip = ['1N8O', '1AZS', '1GP2', '1K5D', '2J7P', '2O3B', '1FAK', '1A2K', '1HCF', #double free corruption
-			'2VIS', '1FC2', '1GCQ', '2VDB', '1ZM4', '2H7V', '3CPH', '1E4K', '2HMI', '1ZLI', '2I9B', '1NW9', #interface is measured between one of three subunits
-			'1XU1', #segmentation fault
-			'1EER' #chains problem
-			]
+	
+	skip = ['2VIS','1AZS', '2J7P', '2O3B', '1FAK', '1FC2', '1GCQ', 
+			'2VDB', '1ZM4', '2H7V', '3CPH', '1E4K', '2HMI', '1ZLI',
+			'2I9B', '1EER', '1NW9']
 	
 	for n, target_name in enumerate(benchmark.get_target_names()):
-		# target_name = '1OYV'
 		if target_name in skip:
 			print("Skipping prediction for", target_name, n)	
 			continue
@@ -235,18 +238,13 @@ def get_irmsd(benchmark_dir, benchmark_table, natives_dir, decoys_dir, num_conf=
 		target = benchmark.get_target(target_name)
 		bound_target, unbound_target = benchmark.parse_structures(target)
 		interfaces = benchmark.get_unbound_interfaces(bound_target, unbound_target)
-		N = len(interfaces)
-
-		zdock_output_name = "%s.zd3.0.2.cg.fixed.out"%target_name
-		zdock_irmsd_name = "%s.zd3.0.2.cg.fixed.out.rmsds"%target_name
-		parser.parse_output(os.path.join(decoys_dir, zdock_output_name), os.path.join(decoys_dir, zdock_irmsd_name),
-							header_only=False)
-
+		
+		parser.parse_output(target_name, header_only=False)
+		
 		unbound_receptor = ProteinStructure(*p2c([unbound_target["receptor"]["path"]]))
 		unbound_receptor.set(*unbound_receptor.select_CA())
 		unbound_ligand = ProteinStructure(*p2c([unbound_target["ligand"]["path"]]))
 		unbound_ligand.set(*unbound_ligand.select_CA())
-		
 		
 		#This interface will be rotated later
 		unbound_interfaces = []
@@ -255,12 +253,11 @@ def get_irmsd(benchmark_dir, benchmark_table, natives_dir, decoys_dir, num_conf=
 			lig = ProteinStructure(*unbound_ligand.select_residues_list(ulig_sel))
 			unbound_interfaces.append( (rec, lig) )
 		
-
 		bound_receptor = ProteinStructure(*p2c([bound_target["receptor"]["path"]]))
 		bound_receptor.set(*bound_receptor.select_CA())
 		bound_ligand = ProteinStructure(*p2c([bound_target["ligand"]["path"]]))
 		bound_ligand.set(*bound_ligand.select_CA())
-
+		
 		#This interface is static
 		bound_interfaces = []
 		for urec_sel, ulig_sel, brec_sel, blig_sel in interfaces:
@@ -268,7 +265,7 @@ def get_irmsd(benchmark_dir, benchmark_table, natives_dir, decoys_dir, num_conf=
 			lig = ProteinStructure(*bound_ligand.select_residues_list(blig_sel))
 			cplx = unite_proteins(rec, lig)
 			bound_interfaces.append(cplx)
-
+		
 		c2rmsd = Coords2RMSD()	
 		result[target_name] = []
 		for i in range(num_conf):
@@ -278,21 +275,15 @@ def get_irmsd(benchmark_dir, benchmark_table, natives_dir, decoys_dir, num_conf=
 				mobile_cplx = unite_proteins(rec, new_lig)
 				for static_cplx in bound_interfaces:
 					all_rmsd.append(c2rmsd(mobile_cplx.coords, static_cplx.coords, static_cplx.numatoms).item())
-
+			
 			min_rmsd = min(all_rmsd)
 			
 			if min_rmsd > (parser.target_dict["irmsd_reported"][i] + 5.0):
 				raise(Exception("Conformation wrong", i, min_rmsd, parser.target_dict["irmsd_reported"][i]))
 						
-			result[target_name].append( min_rmsd )
-
-		# break
+			result[target_name].append( min_rmsd )	
 
 	return result
-
-
-def plot_protein(protein):
-	pass
 
 if __name__=='__main__':
 	benchmark_dir = os.path.join(DATA_DIR, "DockingBenchmarkV4")
@@ -304,17 +295,15 @@ if __name__=='__main__':
 	overwrite = True
 		
 	zdock_results_filename = os.path.join(zdock_dir, 'DockingBenchmarkV4_15deg_irmsd.pkl')
+	benchmark = DockingBenchmark(benchmark_dir, benchmark_table, natives_dir)
+	parser = ZDOCKParser(decoys_dir)
 	
 	if (not os.path.exists(zdock_results_filename)) or overwrite:
-		results = get_irmsd(benchmark_dir, benchmark_table, natives_dir, decoys_dir, num_conf=1000)
+		results = get_irmsd(benchmark, parser, num_conf=1000)
 		with open(zdock_results_filename, 'wb') as fout:
 			pkl.dump(results, fout)
 	else:
 		with open(zdock_results_filename, 'rb') as fin:
-			results = pkl.load(fin)
-
-	for target_name in results.keys():
-		print(target_name, "Min irmsd = ", min(results[target_name]))
-	
+			results = pkl.load(fin)	
 	
 
