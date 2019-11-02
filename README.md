@@ -8,13 +8,14 @@
 
 # Step by step instructions
 
-[Training dataset (13Gb)](http://proteinfoldingproject.com/static/datasets/LocalDockingDataset.tar.gz)
+[Training dataset (13Gb)](https://drive.google.com/open?id=1QVl2yvgyV-Tk-OMQBU-Ry44th0o1HajO)
 
-[Training logs (39Mb)](http://proteinfoldingproject.com/static/datasets/DeepLocalDockingLog.tar.xz)
+[Training logs (39Mb)](https://drive.google.com/open?id=1tq6cPKAadwVkiIFptP-__GRaNC_lhdiv)
 
-[Preprocessed Docking Benchmark V4 (50Mb)](http://proteinfoldingproject.com/static/datasets/DockingBenchmarkV4.tar.xz)
+[Preprocessed Docking Benchmark V4 (50Mb)](https://drive.google.com/open?id=1_1cOfN0cd9qyi8W3tPBbUWjoYTlHxKgl)
 
-[Preprocessed Docking Benchmark V5 (50Mb)](http://proteinfoldingproject.com/static/datasets/DockingBenchmarkV5.tar.xz)
+[Preprocessed Docking Benchmark V5 (50Mb)](https://drive.google.com/open?id=1XBCiSpa_3aeCzErGfl58HVSByVL3Cdc8
+)
 
 
 ## Precomputed results
